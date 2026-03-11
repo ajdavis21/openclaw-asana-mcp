@@ -4,7 +4,7 @@
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
-const url = require('url');
+const { execSync } = require('child_process');
 
 const CLIENT_ID = process.env.ASANA_CLIENT_ID;
 const CLIENT_SECRET = process.env.ASANA_CLIENT_SECRET;
@@ -50,7 +50,7 @@ const server = http.createServer((req, res) => {
             process.exit(1);
           }
           fs.mkdirSync(require('path').dirname(TOKEN_FILE), { recursive: true });
-          fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
+          fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2), { mode: 0o600 });
           console.log('Token saved to', TOKEN_FILE);
           const name = tokens.data?.name || 'Unknown';
           const workspace = tokens.data?.authorized_workspace?.name || 'Unknown';
@@ -82,8 +82,24 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+// Timeout after 5 minutes if no authorization received
+const TIMEOUT_MS = 5 * 60 * 1000;
+setTimeout(() => {
+  console.error('\nTimed out waiting for authorization (5 minutes). Re-run setup.sh to try again.');
+  server.close();
+  process.exit(1);
+}, TIMEOUT_MS);
+
+server.listen(PORT, '127.0.0.1', () => {
   const authUrl = `https://app.asana.com/-/oauth_authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code`;
-  console.log(`\nOpen this URL in your browser:\n\n  ${authUrl}\n`);
-  console.log(`Waiting for authorization on port ${PORT}...`);
+
+  // Try to open browser automatically
+  const openCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  try {
+    execSync(`${openCmd} "${authUrl}"`, { stdio: 'ignore' });
+    console.log('\nBrowser opened. Waiting for authorization...');
+  } catch {
+    console.log(`\nOpen this URL in your browser:\n\n  ${authUrl}\n`);
+    console.log(`Waiting for authorization on port ${PORT}...`);
+  }
 });

@@ -22,22 +22,8 @@ command -v mcporter >/dev/null 2>&1 || { echo "❌ mcporter is required. Install
 
 # --- Detect OpenClaw model config ---
 OPENCLAW_JSON="$OPENCLAW_DIR/openclaw.json"
-HAS_CODEX=false
-HAS_CLAUDE=false
 
 if [ -f "$OPENCLAW_JSON" ]; then
-  node -e "
-    const cfg = JSON.parse(require('fs').readFileSync('$OPENCLAW_JSON','utf8'));
-    const profiles = cfg.auth?.profiles || {};
-    const hasCodex = Object.keys(profiles).some(k => k.startsWith('openai-codex'));
-    const hasClaude = Object.keys(profiles).some(k => k.startsWith('anthropic'));
-    if (hasCodex) process.stdout.write('CODEX ');
-    if (hasClaude) process.stdout.write('CLAUDE');
-  " 2>/dev/null | while read -r detected; do
-    echo "$detected" | grep -q CODEX && HAS_CODEX=true || true
-    echo "$detected" | grep -q CLAUDE && HAS_CLAUDE=true || true
-  done 2>/dev/null || true
-
   DETECTED=$(node -e "
     const cfg = JSON.parse(require('fs').readFileSync('$OPENCLAW_JSON','utf8'));
     const profiles = cfg.auth?.profiles || {};
@@ -46,8 +32,8 @@ if [ -f "$OPENCLAW_JSON" ]; then
     if (hasCodex && hasClaude) console.log('Codex + Claude (both)');
     else if (hasCodex) console.log('Codex');
     else if (hasClaude) console.log('Claude');
-    else console.log('unknown');
-  " 2>/dev/null || echo "not found")
+    else console.log('no model auth found');
+  " 2>/dev/null || echo "could not read config")
 
   echo "🤖 Detected model config: $DETECTED"
 else
@@ -71,7 +57,8 @@ if [ "$MODE_CHOICE" = "2" ]; then
   echo "Enter your personal Asana Personal Access Token."
   echo "Generate one at: https://app.asana.com/0/my-apps → Personal access tokens"
   echo ""
-  read -rp "Your Asana PAT: " ASANA_PAT
+  read -rsp "Your Asana PAT: " ASANA_PAT
+  echo ""
   if [ -z "$ASANA_PAT" ]; then
     echo "❌ PAT is required."
     exit 1
@@ -93,7 +80,8 @@ else
     echo "  3. Copy the Client ID and Client Secret"
     echo ""
     read -rp "Asana Client ID: " ASANA_CLIENT_ID
-    read -rp "Asana Client Secret: " ASANA_CLIENT_SECRET
+    read -rsp "Asana Client Secret: " ASANA_CLIENT_SECRET
+    echo ""
   fi
 
   if [ -z "$ASANA_CLIENT_ID" ] || [ -z "$ASANA_CLIENT_SECRET" ]; then
@@ -134,7 +122,8 @@ EOF
   echo "Generate one at: https://app.asana.com/0/my-apps → Personal access tokens"
   echo "Press Enter to skip."
   echo ""
-  read -rp "Your Asana PAT (optional but recommended): " ASANA_PAT
+  read -rsp "Your Asana PAT (optional but recommended): " ASANA_PAT
+  echo ""
   if [ -n "$ASANA_PAT" ]; then
     printf '%s' "$ASANA_PAT" > "$PAT_FILE"
     chmod 600 "$PAT_FILE"
@@ -149,43 +138,29 @@ fi
 # --- Configure mcporter ---
 mkdir -p "$(dirname "$MCPORTER_CONFIG")"
 
-if [ -f "$MCPORTER_CONFIG" ]; then
-  node -e "
-    const fs = require('fs');
-    const cfg = JSON.parse(fs.readFileSync('$MCPORTER_CONFIG', 'utf8'));
-    cfg.mcpServers = cfg.mcpServers || {};
-    cfg.mcpServers.asana = {
-      baseUrl: 'https://mcp.asana.com/v2/mcp',
-      description: 'Asana project management',
-      headers: { Authorization: 'Bearer $ACCESS_TOKEN' }
-    };
-    fs.writeFileSync('$MCPORTER_CONFIG', JSON.stringify(cfg, null, 2) + '\n');
-  "
-else
-  cat > "$MCPORTER_CONFIG" <<EOF
-{
-  "mcpServers": {
-    "asana": {
-      "baseUrl": "https://mcp.asana.com/v2/mcp",
-      "description": "Asana project management",
-      "headers": {
-        "Authorization": "Bearer $ACCESS_TOKEN"
-      }
-    }
-  },
-  "imports": []
-}
-EOF
-fi
-chmod 600 "$MCPORTER_CONFIG"
+ACCESS_TOKEN="$ACCESS_TOKEN" node -e "
+  const fs = require('fs');
+  const configPath = '$MCPORTER_CONFIG';
+  const token = process.env.ACCESS_TOKEN;
+  let cfg = { mcpServers: {}, imports: [] };
+  try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
+  cfg.mcpServers = cfg.mcpServers || {};
+  cfg.mcpServers.asana = {
+    baseUrl: 'https://mcp.asana.com/v2/mcp',
+    description: 'Asana project management',
+    headers: { Authorization: 'Bearer ' + token }
+  };
+  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
+"
 echo "✅ mcporter configured: $MCPORTER_CONFIG"
 
 # --- Install refresh script ---
 cp "$SCRIPT_DIR/refresh.js" "$OPENCLAW_DIR/asana-refresh.js"
 
 # --- Set up cron for auto-refresh ---
-CRON_CMD="*/50 * * * * $(which node) $OPENCLAW_DIR/asana-refresh.js >> $OPENCLAW_DIR/asana-refresh.log 2>&1"
-(crontab -l 2>/dev/null | grep -v asana-refresh; echo "$CRON_CMD") | crontab -
+NODE_BIN="$(command -v node)"
+CRON_CMD="*/50 * * * * $NODE_BIN $OPENCLAW_DIR/asana-refresh.js >> $OPENCLAW_DIR/asana-refresh.log 2>&1"
+{ crontab -l 2>/dev/null | grep -v asana-refresh || true; echo "$CRON_CMD"; } | crontab -
 echo "✅ Auto-refresh cron installed (every 50 min)"
 
 # --- Verify ---

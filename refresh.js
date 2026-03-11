@@ -16,12 +16,17 @@ const MCPORTER_PATH = path.join(os.homedir(), '.mcporter', 'mcporter.json');
 const ts = () => new Date().toISOString();
 
 function applyTokenToMcporter(bearerToken) {
-  if (!fs.existsSync(MCPORTER_PATH)) return;
-  const mcporter = JSON.parse(fs.readFileSync(MCPORTER_PATH, 'utf8'));
-  if (mcporter.mcpServers?.asana?.headers) {
-    mcporter.mcpServers.asana.headers.Authorization = `Bearer ${bearerToken}`;
-    fs.writeFileSync(MCPORTER_PATH, JSON.stringify(mcporter, null, 2) + '\n');
+  if (!fs.existsSync(MCPORTER_PATH)) {
+    console.error(`[${ts()}] WARNING: mcporter config not found at ${MCPORTER_PATH}. Token not applied. Re-run setup.sh.`);
+    return;
   }
+  const mcporter = JSON.parse(fs.readFileSync(MCPORTER_PATH, 'utf8'));
+  if (!mcporter.mcpServers?.asana?.headers) {
+    console.error(`[${ts()}] WARNING: No asana entry in mcporter config. Token not applied. Re-run setup.sh.`);
+    return;
+  }
+  mcporter.mcpServers.asana.headers.Authorization = `Bearer ${bearerToken}`;
+  fs.writeFileSync(MCPORTER_PATH, JSON.stringify(mcporter, null, 2) + '\n');
 }
 
 function fallbackToPAT(reason) {
@@ -81,7 +86,7 @@ const req = https.request('https://app.asana.com/-/oauth_token', {
       // Preserve refresh_token if not returned in response
       if (!newTokens.refresh_token) newTokens.refresh_token = tokens.refresh_token;
 
-      fs.writeFileSync(TOKEN_PATH, JSON.stringify(newTokens, null, 2));
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(newTokens, null, 2), { mode: 0o600 });
       applyTokenToMcporter(newTokens.access_token);
       console.log(`[${ts()}] Asana token refreshed. Expires in ${newTokens.expires_in}s.`);
     } catch (e) {
