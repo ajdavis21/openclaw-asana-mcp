@@ -1,2 +1,5 @@
 node_modules/
 *.log
+asana-token.json
+asana-credentials.json
+asana-pat.txt
